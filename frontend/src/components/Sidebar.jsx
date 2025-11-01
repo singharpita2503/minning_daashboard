@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { 
   LayoutDashboard, 
   Users, 
@@ -9,6 +9,7 @@ import {
   Menu,
   X
 } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Analytics', path: '/' },
@@ -18,10 +19,17 @@ const menuItems = [
 const bottomMenuItems = [
   { icon: Settings, label: 'Settings', path: '/settings' },
   { icon: HelpCircle, label: 'Help', path: '/help' },
-  { icon: LogOut, label: 'Logout', path: '/logout' },
 ]
 
 export default function Sidebar({ isOpen, setIsOpen, isCollapsed, setIsCollapsed }) {
+  const { logout } = useAuth()
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
   return (
     <>
       {/* Overlay for mobile */}
@@ -37,7 +45,7 @@ export default function Sidebar({ isOpen, setIsOpen, isCollapsed, setIsCollapsed
         className={`
           fixed lg:static inset-y-0 left-0 z-30
           ${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700
-          flex flex-col py-6
+          flex flex-col py-6 shadow-lg
           transition-all duration-300 ease-in-out
           ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
@@ -112,6 +120,24 @@ export default function Sidebar({ isOpen, setIsOpen, isCollapsed, setIsCollapsed
               )}
             </NavLink>
           ))}
+          
+          {/* Logout Button */}
+          <button
+            onClick={handleLogout}
+            className={`flex items-center gap-3 p-3 rounded-xl text-gray-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-all group relative ${
+              isCollapsed ? 'justify-center' : ''
+            }`}
+          >
+            <LogOut className="w-6 h-6 flex-shrink-0" />
+            {!isCollapsed && <span className="font-medium">Logout</span>}
+            
+            {/* Tooltip for collapsed state */}
+            {isCollapsed && (
+              <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-sm rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                Logout
+              </div>
+            )}
+          </button>
         </div>
       </aside>
     </>

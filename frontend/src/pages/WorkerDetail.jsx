@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import io from 'socket.io-client'
 import { ArrowLeft, Heart, Activity, Thermometer, Wind, Droplet, AlertTriangle, Clock } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
@@ -8,66 +9,144 @@ export default function WorkerDetail() {
   const navigate = useNavigate()
   const [workerData, setWorkerData] = useState(null)
   const [historicalData, setHistoricalData] = useState([])
+  const [isConnected, setIsConnected] = useState(false)
+
+  const celsiusToFahrenheit = (celsius) => {
+    if (celsius === undefined || celsius === null) return undefined
+    return (celsius * 9/5) + 32
+  }
+
+  // Parse raw data from backend
+  const parseRawToPayload = (raw = '') => {
+    const out = {}
+    raw.split(',').forEach(pair => {
+      const [k0, v0] = pair.split(/[:=]/)
+      if (!k0) return
+      const k = k0.trim().toLowerCase()
+      const valStr = (v0 ?? '').trim()
+      const num = Number(valStr)
+      const v = valStr === '' ? undefined : (Number.isNaN(num) ? valStr : num)
+
+      if (k === 'id' || k === 'worker' || k === 'workerid') out.ID = String(v)
+      else if (k === 'name') out.NAME = String(v)
+      else if (k === 'hr' || k === 'bpm' || k === 'heartrate') out.BPM = Number(v)
+      else if (k === 'spo2' || k === 'spO2'.toLowerCase()) out.SPO2 = Number(v)
+      else if (k === 'temp' || k === 'temperature') out.TEMP = Number(v)
+      else if (k === 'mq9') out.MQ9 = Number(v)
+      else if (k === 'mq135') out.MQ135 = Number(v)
+      else if (k === 'alert') out.ALERT = Number(v)
+      else out[k.toUpperCase()] = v
+    })
+    return out
+  }
+
+  const normalizePayload = (p = {}) => {
+    const num = (x) => (x === undefined || x === null || x === '' ? undefined : Number(x))
+    const str = (x) => (x === undefined || x === null ? undefined : String(x))
+    return {
+      id:          str(p.ID ?? p.Id ?? p.workerId ?? p.id),
+      name:        str(p.NAME ?? p.Name ?? p.name),
+      heartRate:   num(p.BPM ?? p.HR ?? p.HeartRate ?? p.heartRate),
+      spo2:        num(p.SPO2 ?? p.SpO2 ?? p.spo2),
+      temperature: num(p.TEMP ?? p.Temperature ?? p.temperature),
+      mq9:         num(p.MQ9 ?? p.mq9),
+      mq135:       num(p.MQ135 ?? p.mq135),
+      alert:       num(p.ALERT ?? p.alert),
+    }
+  }
+
+  const computeStatus = ({ heartRate, spo2, temperature, alert }) => {
+    if (alert === 1) return 'Alert'
+    const tempF = celsiusToFahrenheit(temperature)
+    if ((heartRate !== undefined && (heartRate < 60 || heartRate > 100)) ||
+        (spo2 !== undefined && spo2 < 95) ||
+        (tempF !== undefined && (tempF < 96.8 || tempF > 99.5))) {
+      return 'Alert'
+    }
+    return 'Normal'
+  }
+
+  const namePool = useMemo(() => ([
+    'Ashutosh Keshpage', 'Michael Johnson', 'Sarah Williams', 'David Brown',
+    'Emily Davis', 'Robert Miller', 'Jessica Wilson', 'James Anderson',
+    'Jennifer Taylor', 'William Thomas', 'Linda Martinez', 'Richard Garcia'
+  ]), [])
 
   useEffect(() => {
-    // Generate worker data
-    const generateWorkerData = () => {
-      const names = {
-        'W001': 'Ashutosh Keshpage', 'W002': 'Michael Johnson', 'W003': 'Sarah Williams',
-        'W004': 'David Brown', 'W005': 'Emily Davis', 'W006': 'Robert Miller',
-        'W007': 'Jessica Wilson', 'W008': 'James Anderson', 'W009': 'Jennifer Taylor',
-        'W010': 'William Thomas', 'W011': 'Linda Martinez', 'W012': 'Richard Garcia'
-      }
+    const BACKEND_URL = import.meta.env?.VITE_BACKEND_URL || 'http://localhost:5001'
+    const socket = io(BACKEND_URL, { transports: ['websocket'], reconnectionDelayMax: 5000 })
 
-      const heartRate = Math.floor(Math.random() * (100 - 70) + 70)
-      const spo2 = Math.floor(Math.random() * (100 - 95) + 95)
-      const temperature = (Math.random() * (37.5 - 36.0) + 36.0).toFixed(1)
-      const mq9 = Math.floor(Math.random() * (200 - 100) + 100)
-      const mq135 = Math.floor(Math.random() * (400 - 200) + 200)
+    socket.on('connect', () => setIsConnected(true))
+    socket.on('disconnect', () => setIsConnected(false))
 
-      return {
-        id: workerId,
-        name: names[workerId] || 'Unknown Worker',
-        heartRate,
-        spo2,
-        temperature: parseFloat(temperature),
-        mq9,
-        mq135,
-        status: heartRate > 90 || spo2 < 96 ? 'Alert' : 'Normal',
-        site: 'North Sector Mine',
-        shift: 'Day Shift',
-        role: 'Mining Operator'
-      }
-    }
+    socket.on('esp_event', (evt) => {
+      if (!evt) return
+      const isSensorOrPanic = (evt.type === 'sensor' || evt.type === 'panic' || !evt.type)
+      if (!isSensorOrPanic) return
 
-    // Generate historical data for charts
-    const generateHistoricalData = () => {
-      const data = []
-      const now = new Date()
-      
-      for (let i = 20; i >= 0; i--) {
-        const time = new Date(now - i * 60000) // Data points every minute
-        data.push({
-          time: time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          heartRate: Math.floor(Math.random() * (95 - 70) + 70),
-          spo2: Math.floor(Math.random() * (100 - 95) + 95),
-          temperature: parseFloat((Math.random() * (37.5 - 36.0) + 36.0).toFixed(1)),
-          mq9: Math.floor(Math.random() * (200 - 100) + 100),
-          mq135: Math.floor(Math.random() * (400 - 200) + 200)
-        })
-      }
-      return data
-    }
+      const basePayload = (evt.payload && Object.keys(evt.payload).length)
+        ? evt.payload
+        : (typeof evt.raw === 'string' ? parseRawToPayload(evt.raw) : {})
 
-    const updateData = () => {
-      setWorkerData(generateWorkerData())
-      setHistoricalData(generateHistoricalData())
-    }
+      const p = normalizePayload(basePayload)
 
-    updateData()
-    const interval = setInterval(updateData, 5000)
-    return () => clearInterval(interval)
-  }, [workerId])
+      // Filter for this specific worker
+      const idStr = (p.id || 'W001')
+      if (idStr !== workerId && p.id !== undefined) return // Only update if it's this worker
+
+      const numeric = parseInt(idStr.replace(/\D/g, ''), 10)
+      const poolIdx = Number.isFinite(numeric) && numeric > 0 ? (numeric - 1) % namePool.length : 0
+      const name = p.name || namePool[poolIdx] || `Worker ${idStr}`
+
+      setWorkerData((prev) => {
+        const current = prev || {
+          id: workerId,
+          name,
+          heartRate: undefined,
+          spo2: undefined,
+          temperature: undefined,
+          mq9: undefined,
+          mq135: undefined,
+          status: 'Normal',
+          site: 'North Sector Mine',
+          shift: 'Day Shift',
+          role: 'Mining Operator',
+          lastUpdate: ''
+        }
+
+        const merged = {
+          ...current,
+          name,
+          heartRate:   p.heartRate  ?? current.heartRate,
+          spo2:        p.spo2       ?? current.spo2,
+          temperature: p.temperature?? current.temperature,
+          mq9:         p.mq9        ?? current.mq9,
+          mq135:       p.mq135      ?? current.mq135,
+        }
+
+        merged.status = (evt.type === 'panic') ? 'Alert' : computeStatus({ ...merged, alert: p.alert })
+        merged.lastUpdate = new Date(evt.ts || Date.now()).toLocaleTimeString()
+
+        return merged
+      })
+
+      // Add to historical data
+      setHistoricalData((prev) => {
+        const newPoint = {
+          time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          heartRate: p.heartRate,
+          spo2: p.spo2,
+          temperature: celsiusToFahrenheit(p.temperature),
+          mq9: p.mq9,
+          mq135: p.mq135
+        }
+        const updated = [...prev, newPoint]
+        return updated.slice(-20) // Keep last 20 data points
+      })
+    })
+
+    return () => socket.disconnect()
+  }, [workerId, namePool])
 
   if (!workerData) {
     return <div className="flex items-center justify-center h-screen">Loading...</div>
@@ -81,25 +160,34 @@ export default function WorkerDetail() {
   ]
 
   // Data for bar chart - Average Daily Readings
+  const tempF = celsiusToFahrenheit(workerData.temperature)
   const barData = [
     { name: 'Heart Rate', value: workerData.heartRate, max: 100, color: '#ef4444' },
     { name: 'SpO₂', value: workerData.spo2, max: 100, color: '#3b82f6' },
-    { name: 'Temp', value: workerData.temperature * 10, max: 40, color: '#f97316' },
+    { name: 'Body Temp', value: tempF, max: 110, color: '#f97316' },
   ]
 
   return (
     <div className="space-y-6">
       {/* Header with Back Button */}
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => navigate('/')}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <ArrowLeft className="w-6 h-6 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Worker Detailed Analysis</h1>
-          <p className="text-gray-600 mt-1">Comprehensive health and safety monitoring</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/')}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-6 h-6 text-gray-600 dark:text-gray-300" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Worker Detailed Analysis</h1>
+            <p className="text-gray-600 dark:text-gray-400 mt-1">Comprehensive health and safety monitoring</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {isConnected ? 'Live' : 'Disconnected'}
+          </span>
         </div>
       </div>
 
@@ -132,9 +220,9 @@ export default function WorkerDetail() {
             }`}>
               {workerData.status}
             </span>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <Clock className="w-4 h-4" />
-              <span>Last update: {new Date().toLocaleTimeString()}</span>
+              <span>Last update: {workerData.lastUpdate || 'N/A'}</span>
             </div>
           </div>
         </div>
@@ -149,7 +237,7 @@ export default function WorkerDetail() {
             </div>
             <div>
               <p className="text-xs text-gray-600">Heart Rate</p>
-              <p className="text-2xl font-bold text-gray-900">{workerData.heartRate}</p>
+              <p className="text-2xl font-bold text-gray-900">{workerData.heartRate ?? '—'}</p>
               <p className="text-xs text-gray-500">BPM</p>
             </div>
           </div>
@@ -162,7 +250,7 @@ export default function WorkerDetail() {
             </div>
             <div>
               <p className="text-xs text-gray-600">SpO₂</p>
-              <p className="text-2xl font-bold text-gray-900">{workerData.spo2}</p>
+              <p className="text-2xl font-bold text-gray-900">{workerData.spo2 ?? '—'}</p>
               <p className="text-xs text-gray-500">%</p>
             </div>
           </div>
@@ -174,9 +262,13 @@ export default function WorkerDetail() {
               <Thermometer className="w-6 h-6 text-orange-500" />
             </div>
             <div>
-              <p className="text-xs text-gray-600">Temperature</p>
-              <p className="text-2xl font-bold text-gray-900">{workerData.temperature}</p>
-              <p className="text-xs text-gray-500">°C</p>
+              <p className="text-xs text-gray-600">Body Temperature</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {workerData.temperature !== undefined && workerData.temperature !== null 
+                  ? celsiusToFahrenheit(workerData.temperature).toFixed(1) 
+                  : '—'}
+              </p>
+              <p className="text-xs text-gray-500">°F</p>
             </div>
           </div>
         </div>
@@ -188,7 +280,7 @@ export default function WorkerDetail() {
             </div>
             <div>
               <p className="text-xs text-gray-600">MQ9</p>
-              <p className="text-2xl font-bold text-gray-900">{workerData.mq9}</p>
+              <p className="text-2xl font-bold text-gray-900">{workerData.mq9 ?? '—'}</p>
               <p className="text-xs text-gray-500">ppm</p>
             </div>
           </div>
@@ -201,7 +293,7 @@ export default function WorkerDetail() {
             </div>
             <div>
               <p className="text-xs text-gray-600">MQ135</p>
-              <p className="text-2xl font-bold text-gray-900">{workerData.mq135}</p>
+              <p className="text-2xl font-bold text-gray-900">{workerData.mq135 ?? '—'}</p>
               <p className="text-xs text-gray-500">ppm</p>
             </div>
           </div>
@@ -250,16 +342,16 @@ export default function WorkerDetail() {
         <div className="card">
           <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
             <Thermometer className="w-5 h-5 text-orange-500" />
-            Temperature Trend (Last 20 mins)
+            Body Temperature Trend (Last 20 mins)
           </h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={historicalData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-              <YAxis domain={[35, 38]} tick={{ fontSize: 11 }} />
+              <YAxis domain={[95, 101]} tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="temperature" name="Temperature (°C)" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="temperature" name="Body Temperature (°F)" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -331,8 +423,8 @@ export default function WorkerDetail() {
       </div>
 
       {/* Notes */}
-      <div className="text-center text-sm text-gray-500">
-        Data updates every 5 seconds • Showing last 20 minutes of activity
+      <div className="text-center text-sm text-gray-500 dark:text-gray-400">
+        Live data via WebSocket • Showing last 20 data points
       </div>
     </div>
   )
