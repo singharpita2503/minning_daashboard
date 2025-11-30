@@ -1,14 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Menu, Search, Bell, Sun, Moon, ChevronDown, LogIn, LogOut, User } from 'lucide-react'
+import { Menu, Search, Bell, Sun, Moon, ChevronDown, LogIn, LogOut, User, AlertTriangle, CheckCircle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function Navbar({ toggleSidebar, toggleCollapse, isCollapsed, darkMode, toggleDarkMode }) {
   const { user, logout, isAuthenticated } = useAuth()
   const navigate = useNavigate()
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [alertLoading, setAlertLoading] = useState(false)
+  const [neutralLoading, setNeutralLoading] = useState(false)
   const dropdownRef = useRef(null)
   const userInitials = user?.name?.split(' ').map(n => n[0]).join('') || 'AD'
+  
+  const BACKEND_URL = import.meta.env?.VITE_BACKEND_URL || 'http://localhost:5001'
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -31,6 +35,44 @@ export default function Navbar({ toggleSidebar, toggleCollapse, isCollapsed, dar
     logout()
     navigate('/login')
   }
+
+  const sendAlertToControlRoom = async (type) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/send_alert`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: type,
+          timestamp: new Date().toISOString()
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (response.ok) {
+        console.log(`✅ ${type} sent to control room:`, data)
+        // You could show a toast notification here
+      } else {
+        console.error(`❌ Failed to send ${type}:`, data)
+      }
+    } catch (error) {
+      console.error(`❌ Error sending ${type} to control room:`, error)
+    }
+  }
+
+  const handleAlertClick = async () => {
+    setAlertLoading(true)
+    await sendAlertToControlRoom('alert')
+    setAlertLoading(false)
+  }
+
+  const handleNeutralClick = async () => {
+    setNeutralLoading(true)
+    await sendAlertToControlRoom('neutral')
+    setNeutralLoading(false)
+  }
   return (
     <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 transition-colors shadow-md">
       <div className="flex items-center justify-between">
@@ -48,6 +90,28 @@ export default function Navbar({ toggleSidebar, toggleCollapse, isCollapsed, dar
               placeholder="Search..."
               className="bg-transparent border-none outline-none text-sm w-40 lg:w-60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
             />
+          </div>
+          
+          {/* Alert and Neutral Buttons */}
+          <div className="hidden md:flex items-center gap-2">
+            <button
+              onClick={handleAlertClick}
+              disabled={alertLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-lg transition-colors font-medium text-sm"
+              title="Send Alert to Control Room"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              <span>Alert</span>
+            </button>
+            <button
+              onClick={handleNeutralClick}
+              disabled={neutralLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white rounded-lg transition-colors font-medium text-sm"
+              title="Send Neutral Status to Control Room"
+            >
+              <CheckCircle className="w-4 h-4" />
+              <span>Neutral</span>
+            </button>
           </div>
         </div>
 
